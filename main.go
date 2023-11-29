@@ -283,7 +283,7 @@ func GetStackIssues(db *sql.DB, qTitle string) {
 		loc, _ := time.LoadLocation("America/Chicago")
 		date := time.Unix(int64(creationDate), 0).In(loc)
 		cd := date.Format("2006-01-02T15:04:05 -07:00:00")
-		sql := `INSERT INTO stack_issues ("question", "answer", "display_name", "account_id", "user_id", "question_id", "creation_date", "query") values($1, $2, $3, $4, $5, $6, $7)`
+		sql := `INSERT INTO stack_issues ("question", "answer", "display_name", "account_id", "user_id", "question_id", "creation_date", "query") values($1, $2, $3, $4, $5, $6, $7, $8)`
 
 		_, err = db.Exec(
 			sql,
