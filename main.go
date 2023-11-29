@@ -6,6 +6,8 @@ import (
 	"fmt"
 	_ "github.com/GoogleCloudPlatform/cloudsql-proxy/proxy/dialers/postgres"
 	_ "github.com/lib/pq"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -19,7 +21,7 @@ type Issues []struct {
 	State      string `json:"state"`
 	Created_At string `json:"created_at"`
 	Body       string `json:"body"`
-	issue_id   string `json:"id"`
+	Issue_id   string `json:"id"`
 }
 
 type Response struct {
@@ -48,6 +50,39 @@ type Response struct {
 	HasMore        bool `json:"has_more"`
 	QuotaMax       int  `json:"quota_max"`
 	QuotaRemaining int  `json:"quota_remaining"`
+}
+
+var (
+	requestsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "http_requests_total",
+			Help: "Total number of HTTP requests made",
+		},
+		[]string{"api"},
+	)
+
+	requestDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "http_request_duration_seconds",
+			Help:    "Histogram of HTTP request durations",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"api"},
+	)
+
+	responseSize = prometheus.NewSummaryVec(
+		prometheus.SummaryOpts{
+			Name: "http_response_size_bytes",
+			Help: "Summary of HTTP response sizes in bytes",
+		},
+		[]string{"api"},
+	)
+)
+
+func init() {
+	prometheus.MustRegister(requestsTotal)
+	prometheus.MustRegister(requestDuration)
+	prometheus.MustRegister(responseSize)
 }
 
 func main() {
@@ -95,11 +130,7 @@ func main() {
 	GetGitIssues(db, "milvus-io", "milvus")
 	GetGitIssues(db, "golang", "go")
 	db.Close()
-	// db_connection = "user=postgres dbname=StackoverflowDB password=root host=localhost sslmode=disable"
-	// db, err = sql.Open("postgres", db_connection)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
+
 	dbName = "StackoverflowDB"
 	dbURI = fmt.Sprintf("host=%s dbname=%s user=%s password=%s sslmode=disable",
 		connectionName, dbName, dbUser, dbPass)
@@ -118,9 +149,14 @@ func main() {
 	GetStackIssues(db, "milvus")
 	GetStackIssues(db, "golang")
 	db.Close()
+
+	http.Handle("/metrics", promhttp.Handler())
+	log.Fatal(http.ListenAndServe(":9091", nil))
+
 }
 
 func GetGitIssues(db *sql.DB, owner string, repo string) {
+
 	drop_table := `drop table if exists git_issues`
 	_, err := db.Exec(drop_table)
 	if err != nil {
@@ -131,8 +167,10 @@ func GetGitIssues(db *sql.DB, owner string, repo string) {
 						"id"   SERIAL , 
 						"title" VARCHAR(255), 
 						"state" VARCHAR(255), 
-						"created_at" TIMESTAMP WITH TIME ZONE,
+						"created_at" TIMESTAMP WITH TIME_ZONE,
 						"repo" VARCHAR(255),
+						"body" VARCHAR(2048),
+						"issue_id" INTEGER,
 						PRIMARY KEY ("id") 
 					);`
 
@@ -141,30 +179,43 @@ func GetGitIssues(db *sql.DB, owner string, repo string) {
 		panic(_err)
 	}
 	var url = "https://api.github.com/repos/" + owner + "/" + repo + "/issues?state=all"
-
+	start := time.Now()
 	res, err := http.Get(url)
 	if err != nil {
+		requestsTotal.WithLabelValues("GitError").Inc()
+		requestDuration.WithLabelValues("GitError").Observe(time.Since(start).Seconds())
 		panic(err)
 	}
+	duration := time.Since(start).Seconds()
 
+	// Increment total requests metric
+	requestsTotal.WithLabelValues("GitSuccess").Inc()
+
+	// Observe request duration metric
+	requestDuration.WithLabelValues("GitSuccess").Observe(duration)
 	body, _ := ioutil.ReadAll(res.Body)
-	var issues_list Issues
-	json.Unmarshal(body, &issues_list)
+	responseSize.WithLabelValues("GitSuccess").Observe(float64(len(body)))
+	var issuesList Issues
+	json.Unmarshal(body, &issuesList)
 
 	// Store issues in PostgreSQL database
-	for i := 0; i < len(issues_list); i++ {
-		title := issues_list[i].Title
-		state := issues_list[i].State
-		created_at := issues_list[i].Created_At
+	for i := 0; i < len(issuesList); i++ {
+		title := issuesList[i].Title
+		state := issuesList[i].State
+		created_at := issuesList[i].Created_At
+		body := issuesList[i].Body
+		issue_id := issuesList[i].Issue_id
 
-		sql := `INSERT INTO git_issues ("title", "state", "created_at","repo") values($1, $2, $3, $4)`
+		sql := `INSERT INTO git_issues ("title", "state", "created_at","repo","body","issue_id") values($1, $2, $3, $4, $5, $6)`
 
 		_, err = db.Exec(
 			sql,
 			title,
 			state,
 			created_at,
-			repo)
+			repo,
+			body,
+			issue_id)
 
 		if err != nil {
 			panic(err)
@@ -176,6 +227,7 @@ func GetGitIssues(db *sql.DB, owner string, repo string) {
 }
 
 func GetStackIssues(db *sql.DB, qTitle string) {
+	start := time.Now()
 	dropTable := `drop table if exists stack_issues`
 	_, err := db.Exec(dropTable)
 	if err != nil {
@@ -184,7 +236,8 @@ func GetStackIssues(db *sql.DB, qTitle string) {
 
 	createTable := `CREATE TABLE IF NOT EXISTS "stack_issues" (
 						"id" SERIAL,	
-						"title" VARCHAR(255),
+						"question" VARCHAR(255),
+						"answer" bool,
 						"display_name" VARCHAR(255),
 						"account_id" VARCHAR(255),
     					"user_id" VARCHAR(255),
@@ -202,17 +255,22 @@ func GetStackIssues(db *sql.DB, qTitle string) {
 
 	res, err := http.Get(url)
 	if err != nil {
+		requestsTotal.WithLabelValues("StackoverflowError").Inc()
+		requestDuration.WithLabelValues("StackoverflowError").Observe(time.Since(start).Seconds())
 		panic(err)
 	}
 
 	body, _ := ioutil.ReadAll(res.Body)
+	responseSize.WithLabelValues("StackoverflowSuccess").Observe(float64(len(body)))
+
 	var response Response
 	json.Unmarshal(body, &response)
 
 	// Store items in PostgreSQL database
 	for i := 0; i < len(response.Items); i++ {
 
-		title := response.Items[i].Title
+		question := response.Items[i].Title
+		answer := response.Items[i].IsAnswered
 		displayName := response.Items[i].Owner.DisplayName
 		accountId := response.Items[i].Owner.AccountID
 		userID := response.Items[i].Owner.UserID
@@ -222,11 +280,12 @@ func GetStackIssues(db *sql.DB, qTitle string) {
 		loc, _ := time.LoadLocation("America/Chicago")
 		date := time.Unix(int64(creationDate), 0).In(loc)
 		cd := date.Format("2006-01-02T15:04:05 -07:00:00")
-		sql := `INSERT INTO stack_issues ("title", "display_name", "account_id", "user_id", "question_id", "creation_date", "query") values($1, $2, $3, $4, $5, $6, $7)`
+		sql := `INSERT INTO stack_issues ("question", "answer", "display_name", "account_id", "user_id", "question_id", "creation_date", "query") values($1, $2, $3, $4, $5, $6, $7)`
 
 		_, err = db.Exec(
 			sql,
-			title,
+			question,
+			answer,
 			displayName,
 			accountId,
 			userID,
@@ -238,6 +297,13 @@ func GetStackIssues(db *sql.DB, qTitle string) {
 			panic(err)
 		}
 	}
+	duration := time.Since(start).Seconds()
+
+	// Increment total requests metric
+	requestsTotal.WithLabelValues("StackoverflowSuccess").Inc()
+
+	// Observe request duration metric
+	requestDuration.WithLabelValues("StackoverflowSuccess").Observe(duration)
 
 	fmt.Println("Items fetched and stored successfully!")
 
