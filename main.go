@@ -170,7 +170,6 @@ func GetGitIssues(db *sql.DB, owner string, repo string) {
 						"created_at" TIMESTAMP WITH TIME ZONE,
 						"repo" VARCHAR(255),
 						"body" VARCHAR(2048),
-						"issue_id" int,
 						PRIMARY KEY ("id") 
 					);`
 
@@ -204,9 +203,8 @@ func GetGitIssues(db *sql.DB, owner string, repo string) {
 		state := issuesList[i].State
 		created_at := issuesList[i].Created_At
 		body1 := issuesList[i].Body
-		issue_id := issuesList[i].Issue_id
 
-		sql := `INSERT INTO git_issues ("title", "state", "created_at","repo","body","issue_id") values($1, $2, $3, $4, $5, $6)`
+		sql := `INSERT INTO git_issues ("title", "state", "created_at","repo","body") values($1, $2, $3, $4, $5)`
 
 		_, err = db.Exec(
 			sql,
@@ -214,8 +212,7 @@ func GetGitIssues(db *sql.DB, owner string, repo string) {
 			state,
 			created_at,
 			repo,
-			body1,
-			issue_id)
+			body1)
 
 		if err != nil {
 			panic(err)
