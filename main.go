@@ -170,7 +170,7 @@ func GetGitIssues(db *sql.DB, owner string, repo string) {
 						"created_at" TIMESTAMP WITH TIME ZONE,
 						"repo" VARCHAR(255),
 						"body" VARCHAR(2048),
-						"issue_id" INTEGER,
+						"issue_id" int,
 						PRIMARY KEY ("id") 
 					);`
 
