@@ -1,4 +1,4 @@
-package ASEAssign5
+package main
 
 import (
 	"database/sql"
@@ -12,6 +12,15 @@ import (
 	"os"
 	"time"
 )
+
+// Issue represents the structure of the GitHub issue.
+type Issues []struct {
+	Title      string `json:"title"`
+	State      string `json:"state"`
+	Created_At string `json:"created_at"`
+	Body       string `json:"body"`
+	issue_id   string `json:"id"`
+}
 
 type Response struct {
 	Items []struct {
@@ -43,11 +52,10 @@ type Response struct {
 
 func main() {
 
-	// Database connection settings
 	connectionName := "aseassign5:us-central1:mypostgres"
 	dbUser := "postgres"
 	dbPass := "root"
-	dbName := "StackoverflowDB"
+	dbName := "GitHubDB"
 
 	dbURI := fmt.Sprintf("host=%s dbname=%s user=%s password=%s sslmode=disable",
 		connectionName, dbName, dbUser, dbPass)
@@ -58,7 +66,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("Error on initializing database connection: %s", err.Error())
 	}
-	defer db.Close()
 
 	//Test the database connection
 	log.Println("Testing database connection")
@@ -81,7 +88,90 @@ func main() {
 		log.Fatal(http.ListenAndServe(fmt.Sprintf(":%s", port), nil))
 	}()
 
+	GetGitIssues(db, "prometheus", "prometheus")
+	GetGitIssues(db, "SeleniumHQ", "selenium")
+	GetGitIssues(db, "openai", "openai-python")
+	GetGitIssues(db, "docker", "compose")
+	GetGitIssues(db, "milvus-io", "milvus")
+	GetGitIssues(db, "golang", "go")
+	db.Close()
+	// db_connection = "user=postgres dbname=StackoverflowDB password=root host=localhost sslmode=disable"
+	// db, err = sql.Open("postgres", db_connection)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	dbName = "StackoverflowDB"
+	dbURI = fmt.Sprintf("host=%s dbname=%s user=%s password=%s sslmode=disable",
+		connectionName, dbName, dbUser, dbPass)
+
+	// Initialize the SQL DB handle
+	log.Println("Initializing database connection")
+
+	db, err = sql.Open("cloudsqlpostgres", dbURI)
+	if err != nil {
+		log.Fatalf("Error on initializing database connection: %s", err.Error())
+	}
+	GetStackIssues(db, "prometheus")
+	GetStackIssues(db, "selenium")
+	GetStackIssues(db, "openai")
+	GetStackIssues(db, "docker")
+	GetStackIssues(db, "milvus")
 	GetStackIssues(db, "golang")
+	db.Close()
+}
+
+func GetGitIssues(db *sql.DB, owner string, repo string) {
+	drop_table := `drop table if exists git_issues`
+	_, err := db.Exec(drop_table)
+	if err != nil {
+		panic(err)
+	}
+
+	create_table := `CREATE TABLE IF NOT EXISTS "git_issues" (
+						"id"   SERIAL , 
+						"title" VARCHAR(255), 
+						"state" VARCHAR(255), 
+						"created_at" TIMESTAMP WITH TIME ZONE,
+						"repo" VARCHAR(255),
+						PRIMARY KEY ("id") 
+					);`
+
+	_, _err := db.Exec(create_table)
+	if _err != nil {
+		panic(_err)
+	}
+	var url = "https://api.github.com/repos/" + owner + "/" + repo + "/issues?state=all"
+
+	res, err := http.Get(url)
+	if err != nil {
+		panic(err)
+	}
+
+	body, _ := ioutil.ReadAll(res.Body)
+	var issues_list Issues
+	json.Unmarshal(body, &issues_list)
+
+	// Store issues in PostgreSQL database
+	for i := 0; i < len(issues_list); i++ {
+		title := issues_list[i].Title
+		state := issues_list[i].State
+		created_at := issues_list[i].Created_At
+
+		sql := `INSERT INTO git_issues ("title", "state", "created_at","repo") values($1, $2, $3, $4)`
+
+		_, err = db.Exec(
+			sql,
+			title,
+			state,
+			created_at,
+			repo)
+
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	fmt.Println("Issues fetched and stored successfully!")
 
 }
 
