@@ -175,7 +175,7 @@ func GetGitIssues(db *sql.DB, owner string, repo string) {
 						"state" VARCHAR(255), 
 						"created_at" TIMESTAMP WITH TIME ZONE,
 						"repo" VARCHAR(255),
-						"body" VARCHAR(20480000000),
+						"body" VARCHAR(1000000),
 						PRIMARY KEY ("id") 
 					);`
 
