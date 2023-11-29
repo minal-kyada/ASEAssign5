@@ -90,10 +90,39 @@ func main() {
 	connectionName := "aseassign5:us-central1:mypostgres"
 	dbUser := "postgres"
 	dbPass := "root"
-	dbName := "GitHubDB"
+
+	InitializeGitHubDB(connectionName, dbUser, dbPass)
+	InitializeStackoverflowDB(connectionName, dbUser, dbPass)
+
+	http.Handle("/metrics", promhttp.Handler())
+	log.Fatal(http.ListenAndServe(":9091", nil))
+
+}
+
+func InitializeStackoverflowDB(connectionName string, dbUser string, dbPass string) {
+	dbURI := fmt.Sprintf("host=%s dbname=%s user=%s password=%s sslmode=disable",
+		connectionName, "StackoverflowDB", dbUser, dbPass)
+
+	// Initialize the SQL DB handle
+	log.Println("Initializing database connection")
+
+	db, err := sql.Open("cloudsqlpostgres", dbURI)
+	if err != nil {
+		log.Fatalf("Error on initializing database connection: %s", err.Error())
+	}
+	GetStackIssues(db, "prometheus")
+	GetStackIssues(db, "selenium")
+	GetStackIssues(db, "openai")
+	GetStackIssues(db, "docker")
+	GetStackIssues(db, "milvus")
+	GetStackIssues(db, "golang")
+	db.Close()
+}
+
+func InitializeGitHubDB(connectionName string, dbUser string, dbPass string) {
 
 	dbURI := fmt.Sprintf("host=%s dbname=%s user=%s password=%s sslmode=disable",
-		connectionName, dbName, dbUser, dbPass)
+		connectionName, "GitHubDB", dbUser, dbPass)
 
 	// Initialize the SQL DB handle
 	log.Println("Initializing database connection")
@@ -130,29 +159,6 @@ func main() {
 	GetGitIssues(db, "milvus-io", "milvus")
 	GetGitIssues(db, "golang", "go")
 	db.Close()
-
-	dbName = "StackoverflowDB"
-	dbURI = fmt.Sprintf("host=%s dbname=%s user=%s password=%s sslmode=disable",
-		connectionName, dbName, dbUser, dbPass)
-
-	// Initialize the SQL DB handle
-	log.Println("Initializing database connection")
-
-	db, err = sql.Open("cloudsqlpostgres", dbURI)
-	if err != nil {
-		log.Fatalf("Error on initializing database connection: %s", err.Error())
-	}
-	GetStackIssues(db, "prometheus")
-	GetStackIssues(db, "selenium")
-	GetStackIssues(db, "openai")
-	GetStackIssues(db, "docker")
-	GetStackIssues(db, "milvus")
-	GetStackIssues(db, "golang")
-	db.Close()
-
-	http.Handle("/metrics", promhttp.Handler())
-	log.Fatal(http.ListenAndServe(":9091", nil))
-
 }
 
 func GetGitIssues(db *sql.DB, owner string, repo string) {
@@ -169,7 +175,7 @@ func GetGitIssues(db *sql.DB, owner string, repo string) {
 						"state" VARCHAR(255), 
 						"created_at" TIMESTAMP WITH TIME ZONE,
 						"repo" VARCHAR(255),
-						"body" VARCHAR(2048),
+						"body" VARCHAR(20480000000),
 						PRIMARY KEY ("id") 
 					);`
 
